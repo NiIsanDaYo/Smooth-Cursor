@@ -1,0 +1,23 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>pointerrawupdate vs pointermove</title></head>
+<body style="margin:0;height:100vh">
+<script>
+// At each rAF callback, how fresh is the newest sample each event type has delivered?
+// Positive "gain" means pointerrawupdate had a newer sample than pointermove at draw time.
+let lastRaw = 0, lastMove = 0;
+const take = (e) => { const l = e.getCoalescedEvents ? e.getCoalescedEvents() : []; let t = e.timeStamp; for (const c of l) t = Math.max(t, c.timeStamp); return t; };
+addEventListener('pointerrawupdate', (e) => { lastRaw = Math.max(lastRaw, take(e)); });
+addEventListener('pointermove', (e) => { lastMove = Math.max(lastMove, take(e)); });
+window.frames_ = [];
+const loop = (T) => { if (lastMove) frames_.push({ T, raw: lastRaw, move: lastMove }); requestAnimationFrame(loop); };
+requestAnimationFrame(loop);
+window.report = () => {
+  const f = frames_.filter((x) => x.raw && x.move);
+  const gains = f.map((x) => x.raw - x.move);
+  const newer = gains.filter((g) => g > 0.05).length;
+  const ageMove = f.map((x) => x.T - x.move), ageRaw = f.map((x) => x.T - x.raw);
+  const mean = (a) => a.reduce((s, v) => s + v, 0) / a.length;
+  return { frames: f.length, framesWhereRawNewer: newer, meanGainMs: +mean(gains).toFixed(3), maxGainMs: +Math.max(...gains).toFixed(3), meanAgeMoveMs: +mean(ageMove).toFixed(2), meanAgeRawMs: +mean(ageRaw).toFixed(2), secure: isSecureContext };
+};
+</script>
+</body></html>

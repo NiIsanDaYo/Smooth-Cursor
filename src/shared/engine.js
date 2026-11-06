@@ -35,7 +35,7 @@
 
     setPressed(on) {
       this.pressed = on;
-      this.motion.setBypass(on);
+      this.motion.setBypass(on, this.lastHead);
     }
 
     add(t, x, y) { this.motion.push(t, x, y); }
@@ -83,6 +83,9 @@
       ex.vx = v[0] * w;
       ex.vy = v[1] * w;
 
+      // A press glides from the smoothed point to the click point starting at this frame.
+      if (m.snapT !== null && m.glideT === null) m.glideT = head;
+      this.lastHead = head;
       const S = this.blurMs;
       const p = this._p;
       let hint = m.sampleAt(head - S, ex, p);

@@ -5,6 +5,7 @@
   const TAU = Math.PI * 2;
   const CAP = 2048;          // ring buffer size; 2 s at 1000 Hz
   const KEEP_MS = 1000;      // history kept for interpolation
+  const SNAP_MS = 16;        // glide from the smoothed point to the click point on press
 
   class Motion {
     constructor() {
@@ -29,23 +30,42 @@
       this.tLast = 0;
       this.dtTyp = 4;                // typical sample interval (ms), adapts to the device
       this.bypass = false;
+      this.snapT = null;             // history switches to raw positions here
+      this.glideT = null;            // first drawn time after the press; the offset decays from it
+      this.snapX = 0; this.snapY = 0;
     }
 
     // Pressed buttons: the page reacts to the raw position (drags, selections), so the
     // visible cursor must sit exactly on it.
-    setBypass(on) {
+    // tDrawn: the time last drawn on screen, so the glide starts where the cursor was seen.
+    setBypass(on, tDrawn) {
       if (on === this.bypass) return;
+      if (on) this.snap(tDrawn);   // before bypass is set: snap projects with the filter
       this.bypass = on;
-      if (on) this.snap();
     }
 
-    // Jump the filter to the raw position and drop older history, so the blur does not draw
-    // a streak from the lagged position to the click point.
-    snap() {
+    // On press the filter jumps to the raw position, so drags start exactly on the click point.
+    // The drawn path glides over SNAP_MS instead: history after the press holds raw positions,
+    // and sampleAt adds the press-time offset back, in full until the first frame drawn after
+    // the press (glideT, set by the engine) and then with a smoothstep decay. A second sample
+    // at the same timestamp holds the raw point, so the path stays continuous at the press.
+    snap(tDrawn) {
       if (!this.has) return;
+      // The committed filter state is from the last sample; while the mouse rested, the drawn
+      // cursor kept settling past it, so measure the offset from the settled point instead.
+      let px = this.fx, py = this.fy;
+      if (tDrawn > this.tLast && this.params) {
+        const o = [0, 0];
+        this._project((tDrawn - this.tLast) / 1000, { fade: 0, capS: 0, vx: 0, vy: 0 }, o);
+        px = o[0]; py = o[1];
+      }
+      const ox = px - this.rx, oy = py - this.ry;
       this.fx = this.rx; this.fy = this.ry;
-      this.len = 0;
-      this._store(this.tLast, this.fx, this.fy);
+      if (Math.hypot(ox, oy) < 0.05) { this.snapT = null; return; }
+      this.snapT = this.tLast;
+      this.glideT = null;
+      this.snapX = ox; this.snapY = oy;
+      this._store(this.tLast, this.rx, this.ry);
     }
 
     _store(t, x, y) {
@@ -137,6 +157,16 @@
     // extrapolated at velocity f*v for up to capMs, then held. f = 0 gives pure settling.
     // `out` receives [x, y]. `hint` is a history index to start searching from.
     sampleAt(tau, ex, out, hint) {
+      const k = this._base(tau, ex, out, hint);
+      if (this.snapT !== null && tau >= this.snapT) {
+        const u = this.glideT === null ? 0 : Math.max(0, (tau - this.glideT) / SNAP_MS);
+        if (u >= 1) { if (tau - this.glideT > 1000) this.snapT = null; }
+        else { const w = 1 - u * u * (3 - 2 * u); out[0] += this.snapX * w; out[1] += this.snapY * w; }
+      }
+      return k;
+    }
+
+    _base(tau, ex, out, hint) {
       if (!this.has) { out[0] = 0; out[1] = 0; return 0; }
       if (tau >= this.tLast) { this._project((tau - this.tLast) / 1000, ex, out); return this.len - 1; }
       let k = Math.min(hint ?? this.len - 1, this.len - 1);
