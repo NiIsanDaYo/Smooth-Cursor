@@ -2,7 +2,15 @@
 // Per-document pointer tracking: raw samples at the device rate, the cursor the page wants,
 // and the places where the browser or OS draws its own cursor no matter what CSS says.
 (function (SC) {
-  const FRAME_TAGS = new Set(['iframe', 'frame', 'object', 'embed']);
+  // Elements whose inside is another document or a plugin with its own cursor. <object>
+  // counts only when it holds a document (an image <object> is just an image here).
+  const isFrame = (el) => {
+    const n = el.localName;
+    if (n === 'iframe' || n === 'frame' || n === 'embed') return true;
+    if (n !== 'object') return false;
+    try { return !!el.contentWindow; } catch { return true; }
+  };
+  const TOP_LAYER = ':popover-open, :modal, :fullscreen';
   const TEXT_INPUTS = new Set(['text', 'search', 'url', 'tel', 'email', 'password', 'number']);
   const PICKER_INPUTS = new Set(['color', 'date', 'datetime-local', 'month', 'week', 'time', 'file']);
   const HIDE_REASONS_UNTIL_MOVE = new Set(['menu', 'select', 'picker', 'drag']);
@@ -80,8 +88,17 @@
       this.on('pointermove', (e) => this.onMove(e));
       this.on('pointerdown', (e) => this.onDown(e));
       this.on('pointerup', (e) => this.onUp(e));
-      this.on('pointerover', (e) => { if (e.pointerType === 'mouse') this.setTarget(this.deepTarget(e)); });
-      this.on('pointerout', (e) => { if (e.pointerType === 'mouse' && !e.relatedTarget) this.onLeave(); });
+      // pointerover alone marks the pointer as inside: entering the window straight onto an
+      // iframe sends this document no pointermove at all.
+      this.on('pointerover', (e) => {
+        if (e.pointerType !== 'mouse' || !e.isTrusted) return;
+        this.inside = true;
+        this.x = e.clientX; this.y = e.clientY;
+        this.setTarget(this.deepTarget(e));
+      });
+      this.on('pointerout', (e) => { if (e.pointerType === 'mouse' && e.isTrusted && !e.relatedTarget) this.onLeave(); });
+      // Pointer lock hides the OS cursor and freezes clientX/Y; ours must hide with it.
+      this.on('pointerlockchange', () => { if (document.pointerLockElement) this.setOverride('lock'); else this.clearOverride('lock'); }, document);
       this.on('contextmenu', (e) => {
         // Decide after every page listener ran: only an unprevented event opens the native menu.
         setTimeout(() => { if (!e.defaultPrevented) this.setOverride('menu'); }, 0);
@@ -101,7 +118,8 @@
       this.on('keydown', () => { if (this.autoscroll) this.endAutoscroll(); });
       this.on('wheel', () => { if (this.autoscroll) this.endAutoscroll(); });
       this.on('scroll', () => this.onScroll());
-      this.on('resize', () => { this.zones = null; }, window, { capture: false, passive: true });
+      // Resize also fires on page zoom, which changes the native scrollbar width in CSS px.
+      this.on('resize', () => { this.zones = null; this.agent.invalidateMetrics(); }, window, { capture: false, passive: true });
       this.on('blur', () => { this.buttons = 0; this.sink.press(false); }, window, { capture: false, passive: true });
       this.idle = setInterval(() => {
         // Catches cursor changes no event announces (stylesheet swaps, timers).
@@ -116,6 +134,7 @@
     }
 
     detach() {
+      this.detached = true;
       for (const [t, type, fn, opts] of this.handlers) t.removeEventListener(type, fn, opts);
       this.handlers = [];
       clearInterval(this.idle);
@@ -124,7 +143,7 @@
     }
 
     queueTick() {
-      if (this.tickQueued) return;
+      if (this.tickQueued || this.detached) return;
       this.tickQueued = true;
       requestAnimationFrame(this._tick);
     }
@@ -154,6 +173,8 @@
       if (el === this.agent.host || (this.agent.host && this.agent.host.contains(el))) return;
       this.target = el;
       this.targetInfo = null;
+      this.layerEl = null;
+      try { for (let n = el; n; n = parentOrHost(n)) if (n.matches(TOP_LAYER)) { this.layerEl = n; break; } } catch { /* old selector support */ }
       this.probeDirty = true;
       this.mo.disconnect();
       for (let n = el, i = 0; n && i < 40; n = parentOrHost(n), i++) this.mo.observe(n, { attributes: true });
@@ -161,6 +182,8 @@
     }
 
     onMove(e) {
+      // Synthetic events from page scripts would let a page steer the cursor we draw.
+      if (!e.isTrusted) return;
       if (e.pointerType !== 'mouse') {
         if (!this.touch) { this.touch = true; this.queueTick(); }
         return;
@@ -198,7 +221,7 @@
     }
 
     onDown(e) {
-      if (e.pointerType !== 'mouse') return;
+      if (e.pointerType !== 'mouse' || !e.isTrusted) return;
       this.x = e.clientX; this.y = e.clientY;
       if (this.autoscroll && e.timeStamp - this.autoscroll.t > 50) this.endAutoscroll();
       // Chrome keeps the I-beam for the whole drag once a press starts a text selection.
@@ -212,7 +235,7 @@
     }
 
     onUp(e) {
-      if (e.pointerType !== 'mouse') return;
+      if (e.pointerType !== 'mouse' || !e.isTrusted) return;
       this.applyButtons(e.buttons);
       this.probeDirty = true;
       this.queueTick();
@@ -222,8 +245,10 @@
       if (e.button !== 1) return;
       setTimeout(() => {
         if (e.defaultPrevented) return;
-        const t = e.target instanceof Element ? e.target : null;
-        if (t && t.closest('a[href]')) return;
+        const p = e.composedPath ? e.composedPath() : [];
+        const t = p[0] instanceof Element ? p[0] : (e.target instanceof Element ? e.target : null);
+        // composedPath reaches links inside open shadow roots, which e.target hides.
+        if (p.some((n) => n instanceof Element && n.localName === 'a' && n.hasAttribute('href'))) return;
         if (!this.canScroll(t)) return;
         this.autoscroll = { t: e.timeStamp, x: e.clientX, y: e.clientY };
         this.setOverride('autoscroll');
@@ -286,14 +311,16 @@
     // ---------- per-frame resolution ----------
     tick(now) {
       this.tickQueued = false;
-      if (!this.inside) return;
+      if (!this.inside || this.detached) return;
       this.agent.ensureMounted();
-      const st = { inside: true, frame: null, os: null, cursor: null };
+      // layer: the top-layer element (popover, modal, fullscreen) the pointer is in, so the
+      // compositor can re-stack above ones it never saw open (e.g. inside shadow roots).
+      const st = { inside: true, frame: null, os: null, cursor: null, layer: this.layerEl };
       const el = this.target;
       if (this.touch) st.os = 'touch';
       else if (this.override) st.os = this.override;
       else if (!this.agent.cssOn) { st.os = 'pending'; this.agent.ensureCss(); }
-      if (el && FRAME_TAGS.has(el.localName)) {
+      if (el && isFrame(el)) {
         st.frame = el;
       } else if (el) {
         if (!st.os) st.os = this.scrollUiAt(el, this.x, this.y);
@@ -304,7 +331,7 @@
 
     emit(st) {
       const a = this.last;
-      const same = a && a.inside === st.inside && a.frame === st.frame && a.os === st.os &&
+      const same = a && a.inside === st.inside && a.frame === st.frame && a.os === st.os && a.layer === st.layer &&
         ((!a.cursor && !st.cursor) || (a.cursor && st.cursor && a.cursor.kind === st.cursor.kind &&
           a.cursor.url === st.cursor.url && a.cursor.hx === st.cursor.hx && a.cursor.hy === st.cursor.hy));
       this.last = st;

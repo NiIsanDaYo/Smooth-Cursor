@@ -71,7 +71,15 @@
       });
     }
 
-    async setCss(on) {
+    // Calls are chained so the last request wins: a stop() that lands while an insert is still
+    // in flight removes the stylesheet afterwards instead of leaving the cursor hidden.
+    setCss(on) {
+      this.wantCss = on;
+      this.cssChain = (this.cssChain || Promise.resolve()).then(() => this.applyCss(this.wantCss));
+      return this.cssChain.then(() => this.cssOn === on);
+    }
+
+    async applyCss(on) {
       if (on === this.cssOn) return true;
       try {
         const r = await chrome.runtime.sendMessage({ type: 'css', on });

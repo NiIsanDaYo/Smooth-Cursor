@@ -29,7 +29,12 @@
       this.own = null;
       if (this.owner === SELF) this.out.leave();
     }
-    orphaned() { if (this.out.orphaned) this.out.orphaned(); }
+    // Extension reloaded under this page: children must stop hiding their cursor, since
+    // nothing up here will draw it any more.
+    orphaned() {
+      for (const b of this.bridges) b.setLive(false);
+      if (this.out.orphaned) this.out.orphaned();
+    }
 
     // ----- child frames (already converted to this document's coordinates and clock) -----
     childSamples(b, buf) {
@@ -52,7 +57,7 @@
     bridgeFor(el) {
       if (!el) return null;
       let win = null;
-      try { win = el.contentWindow; } catch { /* <embed> */ }
+      try { win = el.contentWindow; } catch { /* no browsing context */ }
       if (!win) return null;
       for (const b of this.bridges) if (b.source === win) return b;
       return null;
@@ -63,7 +68,7 @@
       if (this.owner !== SELF) {
         const b = this.owner;
         if (own && own.frame && own.frame === b.element()) {
-          this.out.state(b.st || { inside: true, os: null, cursor: null, keep: true });
+          this.out.state(b.st || { inside: true, os: null, cursor: null, keep: true, layer: own.layer });
           return;
         }
         this.owner = SELF;
@@ -71,16 +76,19 @@
       if (!own) { this.out.leave(); return; }
       if (own.frame) {
         const b = this.bridgeFor(own.frame);
-        // No live script inside that frame (PDF viewer, other extensions, chrome:// pages):
-        // its own cursor shows there, so ours steps aside.
-        if (!b || !b.live) { this.out.state({ inside: true, os: 'frame', cursor: null }); return; }
+        // The frame draws through us only once its own script runs and hides its cursor
+        // (it says so with 'ready'). Until then, or with no script at all (PDF viewer,
+        // chrome:// pages, SVG documents), its own cursor shows there and ours steps aside.
+        if (!b || !b.ready) { this.out.state({ inside: true, os: 'frame', cursor: null, layer: own.layer }); return; }
         // The child takes over as soon as its first samples arrive; keep the last look.
-        this.out.state({ inside: true, os: null, cursor: null, keep: true });
+        this.out.state({ inside: true, os: null, cursor: null, keep: true, layer: own.layer });
         return;
       }
       this.out.state(own);
     }
   }
+
+  const finite = (v) => typeof v === 'number' && Number.isFinite(v);
 
   // Parent-side end of a child frame's port.
   class ChildBridge {
@@ -88,9 +96,9 @@
       this.mux = mux;
       this.source = source;
       this.port = port;
-      this.el = null;
       this.st = null;
-      this.live = false;
+      this.live = false;     // we told the child to run
+      this.ready = false;    // the child reports it runs and its cursor is hidden
       port.onmessage = (e) => this.onMessage(e.data);
     }
 
@@ -102,6 +110,7 @@
     }
 
     // Child viewport -> this viewport, child clock -> this clock, clamped to the frame's box.
+    // Non-finite values and timestamps outside the last second are dropped.
     convert(buf) {
       const el = this.element();
       if (!el) return null;
@@ -112,13 +121,13 @@
       const ox = r.left + (el.clientLeft + (parseFloat(cs.paddingLeft) || 0)) * sx;
       const oy = r.top + (el.clientTop + (parseFloat(cs.paddingTop) || 0)) * sy;
       const t0 = performance.timeOrigin, now = performance.now();
-      const out = new Float64Array(buf.length);
+      const out = [];
       for (let i = 0; i + 2 < buf.length; i += 3) {
-        out[i] = Math.min(buf[i] - t0, now);
-        out[i + 1] = Math.min(Math.max(ox + buf[i + 1] * sx, r.left), r.right);
-        out[i + 2] = Math.min(Math.max(oy + buf[i + 2] * sy, r.top), r.bottom);
+        const t = buf[i] - t0, x = buf[i + 1], y = buf[i + 2];
+        if (!finite(t) || !finite(x) || !finite(y) || t > now + 1 || t < now - 1000) continue;
+        out.push(t, Math.min(Math.max(ox + x * sx, r.left), r.right), Math.min(Math.max(oy + y * sy, r.top), r.bottom));
       }
-      return out;
+      return out.length ? Float64Array.from(out) : null;
     }
 
     onMessage(d) {
@@ -133,12 +142,23 @@
         case 'p': this.mux.childPress(this, !!d.on); break;
         case 'st': this.mux.childState(this, sanitizeState(d.st)); break;
         case 'l': this.mux.childLeave(this); break;
+        case 'r':
+          this.ready = !!d.on;
+          if (this.mux.own && this.mux.own.frame) this.mux.emit();
+          break;
       }
     }
 
     setLive(on) {
-      this.live = on;
-      try { this.port.postMessage({ t: 'on', on }); } catch { /* frame gone */ }
+      // An orphaned instance (extension reloaded) can no longer draw, so it never says yes.
+      this.live = on && !!(chrome.runtime && chrome.runtime.id);
+      if (!this.live) this.ready = false;
+      try { this.port.postMessage({ t: 'on', on: this.live }); } catch { /* frame gone */ }
+    }
+
+    close() {
+      this.port.onmessage = null;
+      try { this.port.close(); } catch { /* already closed */ }
     }
   }
 
@@ -152,8 +172,8 @@
       cursor: c ? {
         kind: SC.cursorKind(c.kind) === 'auto' ? 'default' : SC.cursorKind(c.kind),
         url: typeof c.url === 'string' && /^(https?:|data:image\/)/i.test(c.url) ? c.url : undefined,
-        hx: Number.isFinite(c.hx) ? c.hx : null,
-        hy: Number.isFinite(c.hy) ? c.hy : null,
+        hx: finite(c.hx) ? c.hx : null,
+        hy: finite(c.hy) ? c.hy : null,
       } : null,
     };
   }
@@ -174,11 +194,14 @@
       this.post({ t: 'st', st: { inside: st.inside, os: st.os || null, keep: !!st.keep, cursor: st.cursor || null } });
     }
     leave() { this.post({ t: 'l' }); }
+    ready(on) { this.post({ t: 'r', on }); }
   }
 
   // Accepts handshakes from direct child frames. Registered at document_start, before any
   // page listener, so the handshake message is stopped before page scripts see it.
-  function listenForChildren(onBridge) {
+  // `token` resolves to a secret the service worker hands only to this extension's content
+  // scripts in this tab; a page inside an iframe cannot forge a hello without it.
+  function listenForChildren(token, onBridge) {
     window.addEventListener('message', (e) => {
       const d = e.data;
       if (!d || typeof d !== 'object' || d[TAG] !== 1 || d.t !== 'hello') return;
@@ -188,19 +211,26 @@
       let isChild = false;
       for (let i = 0; i < window.frames.length; i++) if (window.frames[i] === e.source) { isChild = true; break; }
       if (!isChild) return;
-      onBridge(e.source, port);
+      const source = e.source;
+      token.then((t) => {
+        if (t && d.k === t) onBridge(source, port);
+        else port.close();
+      });
     }, true);
   }
 
-  // Child frame: offer a port to the parent; resolves with the port once the parent's
-  // extension instance answers, or never (no extension in the parent, or it is disabled).
-  function connectUpstream(onActive) {
-    const ch = new MessageChannel();
-    ch.port1.onmessage = (e) => {
-      const d = e.data;
-      if (d && d.t === 'on') onActive(!!d.on, ch.port1);
-    };
-    try { window.parent.postMessage({ [TAG]: 1, t: 'hello' }, '*', [ch.port2]); } catch { /* detached */ }
+  // Child frame: offer a port to the parent. onActive fires when the parent's extension
+  // instance answers, and again whenever it starts or stops drawing.
+  function connectUpstream(token, onActive) {
+    token.then((t) => {
+      if (!t) return;
+      const ch = new MessageChannel();
+      ch.port1.onmessage = (e) => {
+        const d = e.data;
+        if (d && d.t === 'on') onActive(!!d.on, ch.port1);
+      };
+      try { window.parent.postMessage({ [TAG]: 1, t: 'hello', k: t }, '*', [ch.port2]); } catch { /* detached */ }
+    });
   }
 
   SC.Mux = Mux;

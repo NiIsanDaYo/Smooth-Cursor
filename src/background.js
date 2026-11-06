@@ -30,8 +30,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case 'image':
       fetchImage(msg.url).then(sendResponse, () => sendResponse(null));
       return true;
+    case 'token':
+      tabToken(sender.tab.id).then(sendResponse, () => sendResponse(null));
+      return true;
   }
   return false;
+});
+
+// Frame handshake secret, one per tab. Kept in session storage so a restarted worker hands
+// out the same value; the in-memory promise stops two frames from minting two tokens at once.
+const tokens = new Map();
+function tabToken(tabId) {
+  if (!tokens.has(tabId)) {
+    const key = 'token:' + tabId;
+    tokens.set(tabId, chrome.storage.session.get(key).then(async (got) => {
+      if (got[key]) return got[key];
+      const t = crypto.randomUUID();
+      await chrome.storage.session.set({ [key]: t });
+      return t;
+    }));
+  }
+  return tokens.get(tabId);
+}
+chrome.tabs.onRemoved.addListener((tabId) => {
+  tokens.delete(tabId);
+  chrome.storage.session.remove('token:' + tabId);
 });
 
 chrome.tabs.onZoomChange.addListener(({ tabId, newZoomFactor }) => {
@@ -43,7 +66,7 @@ chrome.tabs.onZoomChange.addListener(({ tabId, newZoomFactor }) => {
 async function fetchImage(url) {
   if (typeof url !== 'string' || !/^https?:/i.test(url)) return null;
   const res = await fetch(url, { credentials: 'omit', cache: 'force-cache' });
-  if (!res.ok) return null;
+  if (!res.ok || +res.headers.get('content-length') > 512 * 1024) return null;
   const buf = new Uint8Array(await res.arrayBuffer());
   if (buf.byteLength > 512 * 1024) return null;
   let type = (res.headers.get('content-type') || '').split(';')[0].trim();

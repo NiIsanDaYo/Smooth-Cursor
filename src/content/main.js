@@ -20,16 +20,22 @@
   // Isolated-world handle for debugging from DevTools (not reachable by page scripts).
   SC.debug = { agent, mux, get tracker() { return tracker; }, get compositor() { return compositor; }, get running() { return running; } };
 
+  // Per-tab secret for the frame handshake, shared only by this extension's scripts.
+  const token = chrome.runtime.sendMessage({ type: 'token' }).then((t) => (typeof t === 'string' ? t : null), () => null);
+
   // Child frames can say hello before settings load; answer once we know.
-  SC.listenForChildren((source, port) => {
-    for (const b of mux.bridges) if (b.source === source) mux.bridges.delete(b);
+  SC.listenForChildren(token, (source, port) => {
+    for (const b of mux.bridges) {
+      // A frame that reloaded replaces its old bridge; removed frames report closed.
+      if (b.source === source || b.source.closed) { b.close(); mux.bridges.delete(b); }
+    }
     const b = new SC.ChildBridge(mux, source, port);
     mux.bridges.add(b);
     if (loaded) b.setLive(running);
   });
 
   if (!isTop) {
-    SC.connectUpstream((on, port) => {
+    SC.connectUpstream(token, (on, port) => {
       upPort = port;
       parentOn = on;
       evaluate();
@@ -59,7 +65,9 @@
     const site = SC.siteKey(location.href);
     const siteOff = isTop && site && (settings.disabledSites || []).includes(site);
     want = !!settings.enabled && !siteOff && (isTop || parentOn);
-    if (want && !running && !starting) starting = start().finally(() => { starting = null; if (!want && running) stop(); });
+    if (want && !running && !starting) {
+      starting = start().catch(() => {}).finally(() => { starting = null; if (!want && running) stop(); });
+    }
     else if (!want && running) stop();
     if (running && compositor) compositor.setSettings(settings);
   }
@@ -81,7 +89,9 @@
 
   async function start() {
     await pageSettled();
-    if (!want || !document.documentElement) return;
+    // XML and SVG documents cannot host our element (attachShadow needs HTML), so they keep
+    // the real cursor; a parent sees no 'ready' from them and steps aside too.
+    if (!want || !(document.documentElement instanceof HTMLElement)) return;
     agent.mount();
     agent.onCss = () => tracker && tracker.queueTick();
     if (isTop) {
@@ -93,6 +103,7 @@
     tracker = new SC.Tracker(agent, mux);
     tracker.attach();
     running = true;
+    if (mux.out.ready) mux.out.ready(true);
     for (const b of mux.bridges) b.setLive(true);
   }
 
@@ -104,6 +115,7 @@
     if (compositor) compositor.destroy();
     compositor = null;
     if (mux.out && mux.out.leave) mux.out.leave();
+    if (mux.out && mux.out.ready) mux.out.ready(false);
     mux.out = NULL_SINK;
     mux.own = null;
     agent.setCss(false).then(() => { if (!running) agent.unmount(); });

@@ -64,6 +64,10 @@
     press(on) { this.engine.setPressed(on); this.request(); }
     state(st) {
       this.cur = st;
+      // Entering a different top-layer element: it may have opened after our overlay (a
+      // popover or modal inside a shadow root fires no event we can hear), so re-stack.
+      const layer = st ? st.layer || null : null;
+      if (layer !== this.lastLayer) { this.lastLayer = layer; if (layer) this.queueRaise(); }
       if (st && st.cursor) this.look = st.cursor;
       this.request();
     }
