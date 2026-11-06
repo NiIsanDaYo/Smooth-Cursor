@@ -1,0 +1,49 @@
+{
+  "extName": {
+    "message": "Smooth Cursor"
+  },
+  "extDescription": {
+    "message": "Smooths your mouse cursor and blurs it along the exact path it moved, using every sample your mouse sends."
+  },
+  "power": {
+    "message": "Use Smooth Cursor"
+  },
+  "smoothing": {
+    "message": "Smoothing"
+  },
+  "smoothingOff": {
+    "message": "Off"
+  },
+  "blur": {
+    "message": "Motion blur"
+  },
+  "blurHint": {
+    "message": "17 ms blurs like 60 fps video."
+  },
+  "size": {
+    "message": "Size"
+  },
+  "predict": {
+    "message": "Latency compensation"
+  },
+  "predictHint": {
+    "message": "Looks one frame ahead to reduce cursor lag."
+  },
+  "site": {
+    "message": "Use on $SITE$",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "siteUnavailable": {
+    "message": "Chrome doesn't allow extensions on this page."
+  },
+  "reloadNote": {
+    "message": "This tab was open before the extension loaded. Reload it to use Smooth Cursor."
+  },
+  "reloadTab": {
+    "message": "Reload"
+  }
+}

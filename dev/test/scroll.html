@@ -1,0 +1,15 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Scroll test</title>
+<style>
+  /* A transform on <html> makes position: fixed boxes scroll with the page. */
+  html.t { transform: translateZ(0); }
+  body { margin: 0; font: 16px system-ui; }
+  .row { height: 120px; border-bottom: 1px solid #ddd; padding: 12px; }
+  .pop { position: absolute; }
+</style></head>
+<body>
+<script>
+  if (location.search === '?transform') document.documentElement.classList.add('t');
+  for (let i = 0; i < 60; i++) document.write(`<div class="row">row ${i}</div>`);
+</script>
+</body></html>

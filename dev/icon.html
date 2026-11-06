@@ -1,0 +1,67 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Icon</title>
+<style>
+  body { margin: 0; font: 12px system-ui; }
+  .row { display: flex; gap: 18px; align-items: center; padding: 14px 18px; }
+  .light { background: #f1f3f4; } .dark { background: #35363a; }
+  img.z { image-rendering: pixelated; }
+</style></head>
+<body>
+<script>
+// Toolbar and store icon on a transparent background: the extension's own arrow in dark ink
+// with a white rim (readable on light and dark toolbars), and behind it a neutral gray blur the
+// renderer would draw for a quick flick: equal-weight copies spread along a short arc.
+const ARROW = new Path2D('M1 1 L1 17.6 L4.9 13.9 L7.55 20.1 L9.75 19.15 L7.15 13.1 L12.6 13.1 Z');
+// per size: arrow scale k (design units -> 128-px icon units), path of the hotspot, copies, rim
+const SPEC = {
+  128: { k: 4.6, p: [[4, 30], [30, 16], [62, 12]], n: 140, rim: 1.0 },
+  48: { k: 4.6, p: [[4, 30], [30, 16], [62, 12]], n: 90, rim: 1.1 },
+  32: { k: 4.9, p: [[10, 26], [34, 14], [58, 12]], n: 60, rim: 1.2 },
+  16: { k: 5.4, p: [[20, 22], [38, 14], [56, 10]], n: 36, rim: 1.4 },
+};
+const TRAIL = new URLSearchParams(location.search).get('trail') || '#7d8590';
+function draw(size) {
+  const sp = SPEC[size];
+  const s = size / 128;
+  const at = (u) => {
+    const [a, b, d] = sp.p;
+    return [(1 - u) ** 2 * a[0] + 2 * (1 - u) * u * b[0] + u * u * d[0], (1 - u) ** 2 * a[1] + 2 * (1 - u) * u * b[1] + u * u * d[1]];
+  };
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  // Blur: copies on a separate layer, alpha ramping toward the head like a decelerating flick.
+  const layer = document.createElement('canvas');
+  layer.width = layer.height = size;
+  const lx = layer.getContext('2d');
+  lx.scale(s, s);
+  for (let i = 0; i < sp.n; i++) {
+    const u = i / (sp.n - 1);
+    const [x, y] = at(u);
+    lx.save(); lx.translate(x, y); lx.scale(sp.k, sp.k);
+    lx.globalAlpha = (2.4 / sp.n) * (0.25 + 0.75 * u);
+    lx.fillStyle = TRAIL; lx.fill(ARROW);
+    lx.restore();
+  }
+  ctx.drawImage(layer, 0, 0);
+  // Head: dark ink, white rim.
+  ctx.save(); ctx.scale(s, s);
+  const [hx, hy] = at(1);
+  ctx.translate(hx, hy); ctx.scale(sp.k, sp.k);
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = sp.rim * 2;
+  ctx.strokeStyle = '#ffffff'; ctx.stroke(ARROW);
+  ctx.fillStyle = '#1d2128'; ctx.fill(ARROW);
+  ctx.restore();
+  return c;
+}
+window.icons = {};
+for (const sz of [16, 32, 48, 128]) icons[sz] = draw(sz).toDataURL('image/png');
+for (const bg of ['light', 'dark']) {
+  const row = document.createElement('div'); row.className = 'row ' + bg;
+  for (const sz of [16, 32, 48, 128]) { const i = new Image(); i.src = icons[sz]; row.appendChild(i); }
+  for (const sz of [16, 32]) { const i = new Image(); i.src = icons[sz]; i.className = 'z'; i.width = i.height = sz * 4; row.appendChild(i); }
+  document.body.appendChild(row);
+}
+</script>
+</body></html>

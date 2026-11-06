@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Smooth Cursor test page</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 24px; background: #fafafa; color: #222; }
+  .grid { display: grid; grid-template-columns: repeat(4, 220px); gap: 16px; }
+  .cell { height: 120px; border: 1px solid #ccc; background: #fff; padding: 8px; box-sizing: border-box; }
+  .btn { cursor: pointer; background: #e8f0fe; }
+  .grab { cursor: grab; }
+  .img { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%23e33'/%3E%3C/svg%3E") 12 12, auto; }
+  .none { cursor: none; }
+  .scroll { overflow: auto; }
+  .scroll div { height: 400px; background: linear-gradient(#fff, #ddd); }
+  iframe { width: 220px; height: 120px; border: 1px solid #888; }
+  .tall { height: 1600px; }
+</style></head>
+<body>
+<h1>Smooth Cursor test</h1>
+<div class="grid">
+  <div class="cell" id="text">Plain selectable text for the I-beam. More words here.</div>
+  <a class="cell" id="link" href="#x" style="display:block">A link</a>
+  <div class="cell btn" id="btn"><span id="btnInner">Clickable div (cursor: pointer)</span></div>
+  <div class="cell"><input id="input" placeholder="text input" style="width:180px"><button id="button">Button</button></div>
+  <div class="cell grab" id="grab">grab</div>
+  <div class="cell img" id="img">custom image cursor</div>
+  <div class="cell none" id="none">cursor: none</div>
+  <div class="cell scroll" id="scroll"><div>scrollable</div></div>
+  <iframe id="same" src="frame.html"></iframe>
+  <iframe id="cross" src="http://127.0.0.1:8802/frame.html"></iframe>
+  <div class="cell" id="shadowHost"></div>
+  <div class="cell" style="user-select:none" id="nosel">user-select: none text</div>
+</div>
+<div class="tall"></div>
+<script>
+  document.getElementById('shadowHost').attachShadow({ mode: 'closed' }).innerHTML =
+    '<style>b{cursor:move;display:block;height:100px}</style><b id="sb">closed shadow, cursor: move</b>';
+</script>
+</body></html>

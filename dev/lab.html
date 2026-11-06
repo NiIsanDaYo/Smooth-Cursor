@@ -1,0 +1,61 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Blur lab</title>
+<style>
+  body { margin: 0; background: #f4f4f4; font: 12px system-ui; }
+  #stage { position: relative; width: 640px; height: 400px; overflow: hidden; background: #fff; }
+  #stage.dark { background: #1b1c1f; }
+  #info { padding: 6px; }
+</style></head>
+<body>
+<div id="stage"></div>
+<div id="info"></div>
+<script src="../src/shared/constants.js"></script>
+<script src="../src/shared/motion.js"></script>
+<script src="../src/shared/engine.js"></script>
+<script src="../src/shared/cursors.js"></script>
+<script src="../src/shared/renderer.js"></script>
+<script>
+// Synthetic 1000 Hz mouse on a circle, integer-quantized like real counts; renders several
+// consecutive 60 Hz frames at once so blur continuity and curvature can be inspected.
+const SC = self.SmoothCursor;
+const q = new URLSearchParams(location.search);
+const blur = +(q.get('blur') ?? 17), smoothing = +(q.get('smoothing') ?? 0.4);
+const predict = q.get('predict') === '1', frames = +(q.get('frames') ?? 6), hz = +(q.get('hz') ?? 1000);
+const fps = +(q.get('fps') ?? 60), revMs = +(q.get('rev') ?? 600), kind = q.get('kind') || 'default';
+const stopAt = q.has('stop') ? +q.get('stop') : Infinity;  // ms: motion halts abruptly here
+const stage = document.getElementById('stage');
+if (q.get('bg') === 'dark') stage.classList.add('dark');
+const dpr = devicePixelRatio;
+const cx = 320, cy = 200, R = 140;
+const pos = (t) => {
+  const tt = Math.min(t, stopAt);
+  const a = (tt / revMs) * Math.PI * 2;
+  return [Math.round(cx + R * Math.cos(a)), Math.round(cy + R * Math.sin(a))];
+};
+const engine = new SC.Engine();
+engine.setSettings({ blur, smoothing, predict });
+const F = 1000 / fps;
+const T0 = 400;               // warm-up
+let tSample = 0;
+const renderers = [];
+const draws = [];
+for (let f = 0; f < frames; f++) {
+  const T = T0 + f * F;
+  // feed samples up to T - 2 ms (input delivery latency)
+  for (; tSample <= T - 2; tSample += 1000 / hz) {
+    const [x, y] = pos(tSample);
+    if (tSample <= stopAt + 1 || f === 0) engine.add(tSample, x, y);
+  }
+  // emulate rAF cadence for the engine's frame-interval estimate
+  if (f === 0) for (let k = 30; k > 0; k--) engine.compute(T - k * F, dpr);
+  engine.compute(T, dpr);
+  const r = new SC.Renderer(stage);
+  r.setSprite(SC.getSprite(kind, dpr, T));
+  r.draw(engine.positions, engine.count, dpr);
+  renderers.push(r);
+  draws.push(engine.count);
+}
+document.getElementById('info').textContent =
+  `blur ${blur} ms, smoothing ${smoothing}, predict ${predict}, ${hz} Hz input, ${fps} fps, speed ${(2 * Math.PI * R / revMs * 1000).toFixed(0)} px/s, samples/frame ${draws.join(',')}`;
+</script>
+</body></html>

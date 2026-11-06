@@ -1,0 +1,49 @@
+{
+  "extName": {
+    "message": "Smooth Cursor"
+  },
+  "extDescription": {
+    "message": "マウスが送ってくる入力をすべて使い、カーソルをなめらかに動かして、通った道筋どおりにブラーをかけます。"
+  },
+  "power": {
+    "message": "Smooth Cursor を使う"
+  },
+  "smoothing": {
+    "message": "スムージング"
+  },
+  "smoothingOff": {
+    "message": "オフ"
+  },
+  "blur": {
+    "message": "モーションブラー"
+  },
+  "blurHint": {
+    "message": "17 ms で 60fps の動画と同じぼけ方になります。"
+  },
+  "size": {
+    "message": "大きさ"
+  },
+  "predict": {
+    "message": "遅延補正"
+  },
+  "predictHint": {
+    "message": "動きを1フレーム先読みして、カーソルの遅れを減らします。"
+  },
+  "site": {
+    "message": "$SITE$ で使う",
+    "placeholders": {
+      "site": {
+        "content": "$1"
+      }
+    }
+  },
+  "siteUnavailable": {
+    "message": "このページは Chrome の仕様で拡張機能が動きません。"
+  },
+  "reloadNote": {
+    "message": "このタブは拡張機能より先に開かれています。再読み込みすると使えます。"
+  },
+  "reloadTab": {
+    "message": "再読み込み"
+  }
+}
